@@ -1,0 +1,12 @@
+.DS_Store
+.env
+*.pem
+*.p12
+*.mobileprovision
+*.certSigningRequest
+
+# Swift Package Manager build output
+**/.build/
+
+# Locally assembled application bundles
+*.app/
