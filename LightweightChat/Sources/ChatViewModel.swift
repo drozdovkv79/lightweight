@@ -14,7 +14,8 @@ class ChatViewModel: ObservableObject {
 
     init() {
         let savedID = UserDefaults.standard.string(forKey: "selected_model") ?? ""
-        self.selectedModel = availableModels.first { $0.id == savedID } ?? availableModels[0]
+        let nitroID = savedID.hasSuffix(":nitro") ? savedID : "\(savedID):nitro"
+        self.selectedModel = availableModels.first { $0.id == savedID || $0.id == nitroID } ?? availableModels[0]
 
         // Migrate API key from UserDefaults to Keychain
         if let oldKey = UserDefaults.standard.string(forKey: "openrouter_api_key"), !oldKey.isEmpty {
