@@ -18,6 +18,10 @@ But you do get a few niceties:
 * Enter a system prompt for tone/guidance.
 * Change the color of the app.
 
+## Future
+
+I built this solely for me to use. But if you want to use it, you can! I don't have a paid Apple membership whatever so cannot provide public signed binaries, but I might get one just to see what the experience is like. Or I might not! Who knows! Feel free to file an issue if you think this app is cool and would like to see it more broadly distributed, but I've been using it for months, love it, and that's why it's here now.
+
 ## Build
 
 Requires macOS 14+, Xcode command-line tools, and an Apple Development signing identity.
