@@ -11,6 +11,7 @@ class ChatViewModel: ObservableObject {
     @Published var streamingContent = ""
 
     private var streamTask: Task<Void, Never>?
+    private var activeRequestID: UUID?
 
     init() {
         let savedID = UserDefaults.standard.string(forKey: "selected_model") ?? ""
@@ -37,14 +38,17 @@ class ChatViewModel: ObservableObject {
     }
 
     func reset() {
-        streamTask?.cancel()
+        cancelActiveRequest(keepingPartialResponse: false)
         messages = []
-        streamingContent = ""
-        isLoading = false
+    }
+
+    func stop() {
+        cancelActiveRequest(keepingPartialResponse: true)
     }
 
     func send(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isLoading else { return }
         guard !apiKey.isEmpty else {
             messages.append(ChatMessage(role: "assistant", content: "Set your OpenRouter API key in Settings (⌘,)."))
             return
@@ -59,13 +63,15 @@ class ChatViewModel: ObservableObject {
             history.insert(APIMessage(role: "system", content: systemPrompt), at: 0)
         }
         let model = selectedModel.id
+        let requestID = UUID()
+        activeRequestID = requestID
 
         streamTask = Task {
-            await streamResponse(history: history, model: model)
+            await streamResponse(history: history, model: model, requestID: requestID)
         }
     }
 
-    private func streamResponse(history: [APIMessage], model: String) async {
+    private func streamResponse(history: [APIMessage], model: String, requestID: UUID) async {
         let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -81,16 +87,18 @@ class ChatViewModel: ObservableObject {
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 var errorBody = ""
                 for try await line in bytes.lines {
+                    guard !Task.isCancelled, activeRequestID == requestID else { return }
                     errorBody += line
                 }
+                guard activeRequestID == requestID else { return }
                 messages.append(ChatMessage(role: "assistant", content: "Error \(httpResponse.statusCode): \(errorBody)"))
-                isLoading = false
+                finishRequest(id: requestID)
                 return
             }
 
             var accumulated = ""
             for try await line in bytes.lines {
-                if Task.isCancelled { break }
+                guard !Task.isCancelled, activeRequestID == requestID else { return }
                 guard line.hasPrefix("data: ") else { continue }
                 let payload = String(line.dropFirst(6))
                 if payload == "[DONE]" { break }
@@ -99,19 +107,42 @@ class ChatViewModel: ObservableObject {
                    let chunk = try? JSONDecoder().decode(APIResponse.self, from: data),
                    let content = chunk.choices?.first?.delta?.content {
                     accumulated += content
-                    streamingContent = accumulated
+                    if activeRequestID == requestID {
+                        streamingContent = accumulated
+                    }
                 }
             }
 
+            guard !Task.isCancelled, activeRequestID == requestID else { return }
             if !accumulated.isEmpty {
                 messages.append(ChatMessage(role: "assistant", content: accumulated))
             }
         } catch {
-            if !Task.isCancelled {
+            if !Task.isCancelled, activeRequestID == requestID {
                 messages.append(ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)"))
             }
         }
 
+        finishRequest(id: requestID)
+    }
+
+    private func cancelActiveRequest(keepingPartialResponse: Bool) {
+        let partialResponse = streamingContent
+        streamTask?.cancel()
+        streamTask = nil
+        activeRequestID = nil
+        streamingContent = ""
+        isLoading = false
+
+        if keepingPartialResponse, !partialResponse.isEmpty {
+            messages.append(ChatMessage(role: "assistant", content: partialResponse))
+        }
+    }
+
+    private func finishRequest(id: UUID) {
+        guard activeRequestID == id else { return }
+        streamTask = nil
+        activeRequestID = nil
         streamingContent = ""
         isLoading = false
     }

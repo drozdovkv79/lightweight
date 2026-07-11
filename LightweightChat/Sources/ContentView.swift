@@ -119,9 +119,12 @@ struct ContentView: View {
                     .focused($inputFocused)
 
                 if vm.isLoading {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .frame(width: 20, height: 20)
+                    Button(action: vm.stop) {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .keyboardShortcut(".", modifiers: .command)
                 }
             }
             .frame(height: inputHeight)
@@ -176,6 +179,7 @@ struct ContentView: View {
     }
 
     private func sendMessage() {
+        guard !vm.isLoading else { return }
         let text = input
         input = ""
         vm.send(text)
