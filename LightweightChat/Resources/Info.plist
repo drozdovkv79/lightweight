@@ -9,7 +9,7 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon.icns</string>
     <key>CFBundleIdentifier</key>
-    <string>com.lightweight.chat</string>
+    <string>org.peterc.lightweight</string>
     <key>CFBundleName</key>
     <string>Lightweight</string>
     <key>CFBundlePackageType</key>
@@ -21,8 +21,6 @@
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
     <true/>
 </dict>
 </plist>

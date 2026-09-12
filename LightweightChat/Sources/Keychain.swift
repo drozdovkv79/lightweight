@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Keychain {
-    private static let service = "com.lightweight.chat"
+    private static let service = "org.peterc.lightweight"
 
     static func save(key: String, value: String) {
         let data = Data(value.utf8)

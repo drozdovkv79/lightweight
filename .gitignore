@@ -2,8 +2,16 @@
 .env
 *.pem
 *.p12
+*.p8
+*.pfx
+*.key
+*.cer
 *.mobileprovision
 *.certSigningRequest
+
+# Generated distribution and notarization artifacts
+/dist/
+*notarization*.json
 
 # Swift Package Manager build output
 **/.build/

@@ -18,9 +18,7 @@ struct SettingsView: View {
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: .infinity)
-                            .onChange(of: apiKey) { _, newValue in
-                                Keychain.save(key: "openrouter_api_key", value: newValue.trimmingCharacters(in: .whitespacesAndNewlines))
-                            }
+                            .onSubmit(saveAPIKey)
 
                         Text("Stored securely in your Mac's Keychain.")
                             .font(.footnote)
@@ -75,5 +73,10 @@ struct SettingsView: View {
             .padding(.vertical, 14)
         }
         .frame(width: 460, height: 460)
+        .onDisappear(perform: saveAPIKey)
+    }
+
+    private func saveAPIKey() {
+        Keychain.save(key: "openrouter_api_key", value: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

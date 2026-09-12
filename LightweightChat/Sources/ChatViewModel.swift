@@ -11,6 +11,8 @@ class ChatViewModel: ObservableObject {
     @Published var streamingContent = ""
 
     private var streamTask: Task<Void, Never>?
+    private var streamingUpdateTask: Task<Void, Never>?
+    private var pendingStreamingContent: String?
     private var activeRequestID: UUID?
 
     init() {
@@ -49,7 +51,8 @@ class ChatViewModel: ObservableObject {
     func send(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard !isLoading else { return }
-        guard !apiKey.isEmpty else {
+        let requestAPIKey = apiKey
+        guard !requestAPIKey.isEmpty else {
             messages.append(ChatMessage(role: "assistant", content: "Set your OpenRouter API key in Settings (⌘,)."))
             return
         }
@@ -67,11 +70,11 @@ class ChatViewModel: ObservableObject {
         activeRequestID = requestID
 
         streamTask = Task {
-            await streamResponse(history: history, model: model, requestID: requestID)
+            await streamResponse(history: history, model: model, apiKey: requestAPIKey, requestID: requestID)
         }
     }
 
-    private func streamResponse(history: [APIMessage], model: String, requestID: UUID) async {
+    nonisolated private func streamResponse(history: [APIMessage], model: String, apiKey: String, requestID: UUID) async {
         let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -87,49 +90,85 @@ class ChatViewModel: ObservableObject {
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 var errorBody = ""
                 for try await line in bytes.lines {
-                    guard !Task.isCancelled, activeRequestID == requestID else { return }
+                    try Task.checkCancellation()
                     errorBody += line
                 }
-                guard activeRequestID == requestID else { return }
-                messages.append(ChatMessage(role: "assistant", content: "Error \(httpResponse.statusCode): \(errorBody)"))
-                finishRequest(id: requestID)
+                await failRequest(message: "Error \(httpResponse.statusCode): \(errorBody)", id: requestID)
                 return
             }
 
+            let decoder = JSONDecoder()
             var accumulated = ""
             for try await line in bytes.lines {
-                guard !Task.isCancelled, activeRequestID == requestID else { return }
+                try Task.checkCancellation()
                 guard line.hasPrefix("data: ") else { continue }
                 let payload = String(line.dropFirst(6))
                 if payload == "[DONE]" { break }
 
                 if let data = payload.data(using: .utf8),
-                   let chunk = try? JSONDecoder().decode(APIResponse.self, from: data),
+                   let chunk = try? decoder.decode(APIResponse.self, from: data),
                    let content = chunk.choices?.first?.delta?.content {
                     accumulated += content
-                    if activeRequestID == requestID {
-                        streamingContent = accumulated
-                    }
+                    await queueStreamingUpdate(accumulated, id: requestID)
                 }
             }
 
-            guard !Task.isCancelled, activeRequestID == requestID else { return }
-            if !accumulated.isEmpty {
-                messages.append(ChatMessage(role: "assistant", content: accumulated))
-            }
+            try Task.checkCancellation()
+            await completeRequest(content: accumulated, id: requestID)
         } catch {
-            if !Task.isCancelled, activeRequestID == requestID {
-                messages.append(ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)"))
+            if !Task.isCancelled {
+                await failRequest(message: "Error: \(error.localizedDescription)", id: requestID)
             }
         }
+    }
 
-        finishRequest(id: requestID)
+    private func queueStreamingUpdate(_ content: String, id: UUID) {
+        guard activeRequestID == id else { return }
+        if streamingContent.isEmpty {
+            streamingContent = content
+            return
+        }
+
+        pendingStreamingContent = content
+        guard streamingUpdateTask == nil else { return }
+        streamingUpdateTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(33))
+            } catch {
+                return
+            }
+            self?.flushStreamingUpdate(id: id)
+        }
+    }
+
+    private func flushStreamingUpdate(id: UUID) {
+        streamingUpdateTask = nil
+        guard activeRequestID == id, let content = pendingStreamingContent else { return }
+        pendingStreamingContent = nil
+        streamingContent = content
+    }
+
+    private func completeRequest(content: String, id: UUID) {
+        guard activeRequestID == id else { return }
+        if !content.isEmpty {
+            messages.append(ChatMessage(role: "assistant", content: content))
+        }
+        finishRequest(id: id)
+    }
+
+    private func failRequest(message: String, id: UUID) {
+        guard activeRequestID == id else { return }
+        messages.append(ChatMessage(role: "assistant", content: message))
+        finishRequest(id: id)
     }
 
     private func cancelActiveRequest(keepingPartialResponse: Bool) {
-        let partialResponse = streamingContent
+        let partialResponse = pendingStreamingContent ?? streamingContent
         streamTask?.cancel()
+        streamingUpdateTask?.cancel()
         streamTask = nil
+        streamingUpdateTask = nil
+        pendingStreamingContent = nil
         activeRequestID = nil
         streamingContent = ""
         isLoading = false
@@ -141,7 +180,10 @@ class ChatViewModel: ObservableObject {
 
     private func finishRequest(id: UUID) {
         guard activeRequestID == id else { return }
+        streamingUpdateTask?.cancel()
         streamTask = nil
+        streamingUpdateTask = nil
+        pendingStreamingContent = nil
         activeRequestID = nil
         streamingContent = ""
         isLoading = false
