@@ -9,9 +9,14 @@ DISTRIBUTION_SIGNING_IDENTITY ?= Developer ID Application
 DIST_DIR := dist
 DIST_BUNDLE := $(DIST_DIR)/$(BUNDLE)
 DIST_ARCH_FLAGS := --arch arm64 --arch x86_64
+INFO_PLIST := $(PACKAGE_DIR)/Resources/Info.plist
+CURRENT_VERSION := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" $(INFO_PLIST))
+CURRENT_BUILD := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $(INFO_PLIST))
+DMG := $(DIST_DIR)/$(APP_NAME)-$(CURRENT_VERSION).dmg
+NOTARY_PROFILE ?= lightweight-notary
 LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-.PHONY: all build bundle sign verify register run dist dist-build dist-bundle dist-sign dist-verify clean
+.PHONY: all build bundle sign verify register run version release-check dist dist-build dist-bundle dist-sign dist-verify dmg notarize release clean
 
 all: register
 
@@ -36,6 +41,36 @@ register: verify
 run: register
 	open $(BUNDLE)
 
+# Usage: make version VERSION=1.1 BUILD=2
+# The public version may stay the same for a rebuilt release, but the build must increase.
+version:
+	@current_version="$(CURRENT_VERSION)"; current_build="$(CURRENT_BUILD)"; \
+	if ! printf '%s\n' "$(VERSION)" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$$'; then \
+		echo "VERSION must look like 1.0 or 1.2.3" >&2; exit 1; \
+	fi; \
+	if ! printf '%s\n' "$(BUILD)" | grep -Eq '^[0-9]+$$'; then \
+		echo "BUILD must be an integer" >&2; exit 1; \
+	fi; \
+	if ! awk -v new="$(VERSION)" -v old="$$current_version" 'BEGIN { split(new, n, "."); split(old, o, "."); for (i = 1; i <= 3; i++) { nv = n[i] + 0; ov = o[i] + 0; if (nv > ov) exit 0; if (nv < ov) exit 1 } exit 0 }'; then \
+		echo "VERSION $(VERSION) must not be lower than $$current_version" >&2; exit 1; \
+	fi; \
+	if [ "$(BUILD)" -le "$$current_build" ]; then \
+		echo "BUILD $(BUILD) must be greater than $$current_build" >&2; exit 1; \
+	fi; \
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(INFO_PLIST); \
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(BUILD)" $(INFO_PLIST); \
+	echo "Version updated: $$current_version ($$current_build) -> $(VERSION) ($(BUILD))"
+
+release-check:
+	@version="$(CURRENT_VERSION)"; build="$(CURRENT_BUILD)"; \
+	if ! printf '%s\n' "$$version" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$$'; then \
+		echo "Invalid CFBundleShortVersionString: $$version" >&2; exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$build" | grep -Eq '^[0-9]+$$'; then \
+		echo "Invalid CFBundleVersion: $$build (it must be an integer)" >&2; exit 1; \
+	fi; \
+	echo "Release version: $$version ($$build)"
+
 # Distribution builds stay separate so local builds remain native and quick.
 # dist-sign requires a Developer ID Application certificate.
 dist: dist-verify
@@ -56,6 +91,26 @@ dist-sign: dist-bundle
 dist-verify: dist-sign
 	codesign --verify --deep --strict --verbose=2 $(DIST_BUNDLE)
 	lipo $(DIST_BUNDLE)/Contents/MacOS/$(EXECUTABLE) -verify_arch arm64 x86_64
+
+dmg: dist-verify
+	dmg_stage="$$(mktemp -d /tmp/lightweight-dmg.XXXXXX)"; \
+	trap 'rm -rf "$$dmg_stage"' EXIT; \
+	ditto $(DIST_BUNDLE) "$$dmg_stage/$(BUNDLE)"; \
+	ln -s /Applications "$$dmg_stage/Applications"; \
+	hdiutil create -volname $(APP_NAME) -srcfolder "$$dmg_stage" -ov -format UDZO $(DMG)
+	codesign --force --timestamp --sign "$(DISTRIBUTION_SIGNING_IDENTITY)" $(DMG)
+	codesign --verify --verbose=2 $(DMG)
+
+notarize: dmg
+	xcrun notarytool submit $(DMG) --keychain-profile "$(NOTARY_PROFILE)" --wait
+	xcrun stapler staple $(DMG)
+	xcrun stapler validate $(DMG)
+	spctl --assess --type open --context context:primary-signature --verbose=4 $(DMG)
+
+release: release-check
+	$(MAKE) notarize
+	shasum -a 256 $(DMG)
+	ls -lh $(DMG)
 
 clean:
 	swift package --package-path $(PACKAGE_DIR) clean
