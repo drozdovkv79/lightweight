@@ -18,3 +18,4 @@
 
 # Locally assembled application bundles
 *.app/
+site/
