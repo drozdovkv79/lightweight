@@ -28,9 +28,14 @@ bundle: build
 	cp $(PACKAGE_DIR)/.build/$(CONFIGURATION)/$(EXECUTABLE) $(BUNDLE)/Contents/MacOS/$(EXECUTABLE)
 	cp $(PACKAGE_DIR)/Resources/Info.plist $(BUNDLE)/Contents/Info.plist
 	cp $(PACKAGE_DIR)/Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
+	cp $(PACKAGE_DIR)/Resources/locy_tray.jpeg $(BUNDLE)/Contents/Resources/locy_tray.jpeg
+	cp $(PACKAGE_DIR)/Resources/LightweightChat.entitlements $(BUNDLE)/Contents/Resources/LightweightChat.entitlements
+	for b in $(PACKAGE_DIR)/.build/$(CONFIGURATION)/*.bundle; do \
+		[ -e "$$b" ] && cp -R "$$b" $(BUNDLE)/Contents/Resources/; \
+	done
 
 sign: bundle
-	codesign --force --sign "$(SIGNING_IDENTITY)" --identifier $(BUNDLE_IDENTIFIER) $(BUNDLE)
+	codesign --force --sign "$(SIGNING_IDENTITY)" --entitlements $(PACKAGE_DIR)/Resources/LightweightChat.entitlements --identifier $(BUNDLE_IDENTIFIER) $(BUNDLE)
 
 verify: sign
 	codesign --verify --deep --strict --verbose=2 $(BUNDLE)
@@ -81,12 +86,16 @@ dist-build:
 dist-bundle: dist-build
 	mkdir -p $(DIST_BUNDLE)/Contents/MacOS $(DIST_BUNDLE)/Contents/Resources
 	bin_dir="$$(swift build -c release $(DIST_ARCH_FLAGS) --package-path $(PACKAGE_DIR) --show-bin-path)"; \
-	cp "$$bin_dir/$(EXECUTABLE)" $(DIST_BUNDLE)/Contents/MacOS/$(EXECUTABLE)
+	cp "$$bin_dir/$(EXECUTABLE)" $(DIST_BUNDLE)/Contents/MacOS/$(EXECUTABLE); \
+	for b in "$$bin_dir"/*.bundle; do \
+		[ -e "$$b" ] && cp -R "$$b" $(DIST_BUNDLE)/Contents/Resources/; \
+	done
 	cp $(PACKAGE_DIR)/Resources/Info.plist $(DIST_BUNDLE)/Contents/Info.plist
 	cp $(PACKAGE_DIR)/Resources/AppIcon.icns $(DIST_BUNDLE)/Contents/Resources/AppIcon.icns
+	cp $(PACKAGE_DIR)/Resources/locy_tray.jpeg $(DIST_BUNDLE)/Contents/Resources/locy_tray.jpeg
 
 dist-sign: dist-bundle
-	codesign --force --options runtime --timestamp --sign "$(DISTRIBUTION_SIGNING_IDENTITY)" --identifier $(BUNDLE_IDENTIFIER) $(DIST_BUNDLE)
+	codesign --force --options runtime --timestamp --entitlements $(PACKAGE_DIR)/Resources/LightweightChat.entitlements --sign "$(DISTRIBUTION_SIGNING_IDENTITY)" --identifier $(BUNDLE_IDENTIFIER) $(DIST_BUNDLE)
 
 dist-verify: dist-sign
 	codesign --verify --deep --strict --verbose=2 $(DIST_BUNDLE)
